@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Text, useApp } from 'ink'
 import { ProgressBar } from './ProgressBar'
+import { useMemoryUsage } from '../hooks/useMemoryUsage'
+import { formatBytes } from '../utils'
 
 export interface EncodeCallbacks {
   onFile: (file: string, index: number, total: number, tokens: number) => void
@@ -11,12 +13,6 @@ export interface EncodeProgressProps {
   onRun: (cb: EncodeCallbacks) => Promise<void>
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
-
 export function EncodeProgress({ onRun }: EncodeProgressProps) {
   const { exit } = useApp()
   const [currentFile, setCurrentFile] = useState('')
@@ -24,6 +20,7 @@ export function EncodeProgress({ onRun }: EncodeProgressProps) {
   const [total, setTotal] = useState(0)
   const [totalTokens, setTotalTokens] = useState(0)
   const [done, setDone] = useState<{ tokens: number; bytes: number; elapsed: number } | null>(null)
+  const heapUsed = useMemoryUsage()
 
   useEffect(() => {
     onRun({
@@ -44,7 +41,10 @@ export function EncodeProgress({ onRun }: EncodeProgressProps) {
 
   return (
     <Box flexDirection="column" padding={1} gap={1}>
-      <Text bold color="cyan">Encoder — BPE Encode</Text>
+      <Box justifyContent="space-between">
+        <Text bold color="cyan">Encoder — BPE Encode</Text>
+        <Text color="gray">mem: <Text color={heapUsed > 512 * 1024 * 1024 ? 'red' : 'green'}>{formatBytes(heapUsed)}</Text></Text>
+      </Box>
 
       {total > 0 && (
         <ProgressBar

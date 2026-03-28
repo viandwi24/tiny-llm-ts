@@ -3,18 +3,22 @@ import path from 'path'
 import React from 'react'
 import { renderTUI } from '../tui'
 import { TokenizeProgress, type TokenizeCallbacks } from '../tui/components/TokenizeProgress'
+import type { PretrainTokenizeConfig } from '../config'
+import { SPECIAL_TOKENS } from '../constants'
 
-export interface TokenizeOptions {
-  inputDir: string
-  outputDir: string
+export interface TokenizeOptions extends PretrainTokenizeConfig {
   vocabSize: number
+  charMarker: string
 }
+
+const yield_ = () => new Promise<void>(resolve => setImmediate(resolve))
 
 async function runTokenizeWithCallbacks(opts: TokenizeOptions, cb: TokenizeCallbacks) {
   const start = Date.now()
 
   // step 1: read all text files from inputDir
   cb.onPhase('Reading files...')
+  await yield_()
   const corpus_texts: string[] = []
   const files = fs.readdirSync(opts.inputDir)
   for (const file of files) {
@@ -26,16 +30,17 @@ async function runTokenizeWithCallbacks(opts: TokenizeOptions, cb: TokenizeCallb
 
   // step 2: word frequency count
   cb.onPhase(`Building word frequencies (${corpus_texts.length} files)...`)
+  await yield_()
   const wordFreq: Record<string, number> = {}
   const words = corpus_texts.join('\n\n').toLowerCase().split(/\s+/)
-  const firstCharMarker = 'Ġ'
   for (const word of words) {
-    const token = (firstCharMarker + word).split('').join(' ')
+    const token = (opts.charMarker + word).split('').join(' ')
     wordFreq[token] = (wordFreq[token] || 0) + 1
   }
 
   // step 3: initialize first vocab
   cb.onPhase('Initializing base vocabulary...')
+  await yield_()
   const vocab: Record<string, number> = {}
   let idCount = 0
   for (const word of Object.keys(wordFreq)) {
@@ -51,13 +56,12 @@ async function runTokenizeWithCallbacks(opts: TokenizeOptions, cb: TokenizeCallb
   // step 4: BPE merge
   cb.onPhase('BPE merge...')
   const merges: [string, string][] = []
-  const vocabSize = opts.vocabSize
-  const totalMerges = vocabSize - Object.keys(vocab).length
+  const totalMerges = opts.vocabSize - Object.keys(vocab).length
   let iteration = 0
   const logEvery = Math.max(1, Math.floor(totalMerges / 20))
   const bpeStart = Date.now()
 
-  while (Object.keys(vocab).length < vocabSize) {
+  while (Object.keys(vocab).length < opts.vocabSize) {
     const pairFreq: Record<string, number> = {}
 
     for (const [word, freq] of Object.entries(wordFreq)) {
@@ -86,26 +90,25 @@ async function runTokenizeWithCallbacks(opts: TokenizeOptions, cb: TokenizeCallb
     merges.push([first, second])
     iteration++
 
-    // hanya update TUI tiap logEvery — jangan setiap iterasi agar tidak bottleneck
     if (iteration % logEvery === 0) {
       const elapsed = (Date.now() - bpeStart) / 1000
       const msPerIter = (Date.now() - bpeStart) / iteration
       const eta = (msPerIter * Math.max(0, totalMerges - iteration)) / 1000
       cb.onBpeTick(iteration, totalMerges, elapsed, eta, Object.keys(vocab).length)
+      await yield_()
     }
   }
 
   // step 5: special tokens
   cb.onPhase('Adding special tokens...')
-  const specialTokens = [
-    '<|system|>', '<|user|>', '<|assistant|>', '<|end|>', '<|pad|>', '<|unk|>',
-  ]
-  for (const token of specialTokens) {
+  await yield_()
+  for (const token of SPECIAL_TOKENS) {
     vocab[token] = idCount++
   }
 
   // step 6: save
   cb.onPhase('Saving vocab and merges...')
+  await yield_()
   if (!fs.existsSync(opts.outputDir)) {
     fs.mkdirSync(opts.outputDir, { recursive: true })
   }

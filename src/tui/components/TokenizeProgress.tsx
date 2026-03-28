@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Text, useApp } from 'ink'
 import { ProgressBar } from './ProgressBar'
+import { useMemoryUsage } from '../hooks/useMemoryUsage'
+import { formatBytes } from '../utils'
 
 export interface TokenizeCallbacks {
   onPhase: (phase: string) => void
@@ -22,6 +24,7 @@ export function TokenizeProgress({ vocabSize, onRun }: TokenizeProgressProps) {
   const [eta, setEta] = useState(0)
   const [currentVocabSize, setCurrentVocabSize] = useState(0)
   const [done, setDone] = useState<{ vocabSize: number; merges: number; elapsed: number } | null>(null)
+  const heapUsed = useMemoryUsage()
 
   useEffect(() => {
     onRun({
@@ -46,7 +49,10 @@ export function TokenizeProgress({ vocabSize, onRun }: TokenizeProgressProps) {
 
   return (
     <Box flexDirection="column" padding={1} gap={1}>
-      <Text bold color="cyan">Tokenizer — BPE Training</Text>
+      <Box justifyContent="space-between">
+        <Text bold color="cyan">Tokenizer — BPE Training</Text>
+        <Text color="gray">mem: <Text color={heapUsed > 512 * 1024 * 1024 ? 'red' : 'green'}>{formatBytes(heapUsed)}</Text></Text>
+      </Box>
       <Text color="gray">target vocab size: {vocabSize}</Text>
 
       <Box gap={1}>

@@ -3,18 +3,16 @@ import path from 'path'
 import React from 'react'
 import { renderTUI } from '../tui'
 import { EncodeProgress, type EncodeCallbacks } from '../tui/components/EncodeProgress'
+import type { PretrainEncodeConfig } from '../config'
+import { UNK_TOKEN } from '../constants'
 
-export interface EncodeOptions {
-  inputDir: string
-  vocabDir: string
-  outputFile: string
+export interface EncodeOptions extends PretrainEncodeConfig {
+  charMarker: string
 }
 
-function encode(merges: [string, string][], vocab: Record<string, number>, text: string): number[] {
+function encode(merges: [string, string][], vocab: Record<string, number>, text: string, charMarker: string, unkId: number): number[] {
   const tokenIds: number[] = []
   const words = text.toLowerCase().split(/\s+/).filter(Boolean)
-  const charMarker = 'Ġ'
-  const unkId = vocab['<|unk|>'] ?? 0
 
   for (const word of words) {
     let symbols = (charMarker + word).split('')
@@ -37,6 +35,8 @@ function encode(merges: [string, string][], vocab: Record<string, number>, text:
   return tokenIds
 }
 
+const yield_ = () => new Promise<void>(resolve => setImmediate(resolve))
+
 async function runEncodeWithCallbacks(opts: EncodeOptions, cb: EncodeCallbacks) {
   const start = Date.now()
 
@@ -44,16 +44,19 @@ async function runEncodeWithCallbacks(opts: EncodeOptions, cb: EncodeCallbacks) 
   const mergesPath = path.join(opts.vocabDir, 'merges.json')
   const vocab: Record<string, number> = JSON.parse(fs.readFileSync(vocabPath, 'utf-8'))
   const merges: [string, string][] = JSON.parse(fs.readFileSync(mergesPath, 'utf-8'))
+  await yield_()
 
+  const unkId = vocab[UNK_TOKEN] ?? 0
   const files = fs.readdirSync(opts.inputDir).filter(f => f.endsWith('.txt'))
   const allTokenIds: number[] = []
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!
     const text = fs.readFileSync(path.join(opts.inputDir, file), 'utf-8')
-    const ids = encode(merges, vocab, text)
+    const ids = encode(merges, vocab, text, opts.charMarker, unkId)
     allTokenIds.push(...ids)
     cb.onFile(file, i + 1, files.length, ids.length)
+    await yield_()
   }
 
   const buffer = new Uint16Array(allTokenIds)

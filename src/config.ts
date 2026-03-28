@@ -2,17 +2,58 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import type { WikipediaProviderConfig } from './pretrain/providers/wikipedia'
 
-// ---- Types ----
+// ---- Global ----
+
+export interface TokenizerConfig {
+  charMarker: string
+  vocabSize: number
+}
+
+// ---- Pretrain ----
 
 export interface PretrainProvidersConfig {
   wikipedia?: Partial<WikipediaProviderConfig>
   // provider baru cukup tambah optional key di sini
 }
 
+export interface PretrainTokenizeConfig {
+  inputDir: string
+  outputDir: string
+}
+
+export interface PretrainEncodeConfig {
+  inputDir: string
+  vocabDir: string
+  outputFile: string
+}
+
+export interface PretrainConfig {
+  providers?: PretrainProvidersConfig
+  tokenize?: Partial<PretrainTokenizeConfig>
+  encode?: Partial<PretrainEncodeConfig>
+}
+
 export interface TinyLLMConfig {
-  pretrain?: {
-    providers?: PretrainProvidersConfig
-  }
+  tokenizer?: Partial<TokenizerConfig>
+  pretrain?: PretrainConfig
+}
+
+// ---- Defaults ----
+
+export const DEFAULT_TOKENIZER: TokenizerConfig = {
+  charMarker: 'Ġ',
+  vocabSize: 8000,
+}
+
+export const DEFAULT_PRETRAIN_TOKENIZE: PretrainTokenizeConfig = {
+  inputDir: 'data/pretrain/raw',
+  outputDir: 'data/pretrain/tokenized',
+}
+
+export const DEFAULT_PRETRAIN_ENCODE: PretrainEncodeConfig = {
+  inputDir: 'data/pretrain/raw',
+  vocabDir: 'data/pretrain/tokenized',
+  outputFile: 'data/pretrain/train.bin',
 }
 
 // ---- Loader ----
@@ -27,4 +68,18 @@ export function loadConfig(): TinyLLMConfig {
 
   const raw = readFileSync(CONFIG_PATH, 'utf-8')
   return JSON.parse(raw) as TinyLLMConfig
+}
+
+// ---- Helpers ----
+
+export function resolveTokenizerConfig(config: TinyLLMConfig): TokenizerConfig {
+  return { ...DEFAULT_TOKENIZER, ...config.tokenizer }
+}
+
+export function resolvePretrainTokenizeConfig(config: TinyLLMConfig): PretrainTokenizeConfig {
+  return { ...DEFAULT_PRETRAIN_TOKENIZE, ...config.pretrain?.tokenize }
+}
+
+export function resolvePretrainEncodeConfig(config: TinyLLMConfig): PretrainEncodeConfig {
+  return { ...DEFAULT_PRETRAIN_ENCODE, ...config.pretrain?.encode }
 }

@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "cli": "bun run --watch src/index.ts",
     "fix": "bun src/scripts/fix.ts",
     "postinstall": "bun fix"
   },
