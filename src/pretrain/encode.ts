@@ -1,16 +1,20 @@
 import fs from 'fs'
 import path from 'path'
+import { resolve } from 'path'
 import React from 'react'
 import { renderTUI } from '../tui'
 import { EncodeProgress, type EncodeCallbacks } from '../tui/components/EncodeProgress'
-import type { PretrainEncodeConfig } from '../config'
+import { loadConfig, resolveTokenizerConfig, resolvePretrainEncodeConfig } from '../config'
 import { UNK_TOKEN } from '../constants'
 
-export interface EncodeOptions extends PretrainEncodeConfig {
+interface EncodeOptions {
+  inputDir: string
+  vocabDir: string
+  outputFile: string
   charMarker: string
 }
 
-function encode(merges: [string, string][], vocab: Record<string, number>, text: string, charMarker: string, unkId: number): number[] {
+export function encode(merges: [string, string][], vocab: Record<string, number>, text: string, charMarker: string, unkId: number): number[] {
   const tokenIds: number[] = []
   const words = text.toLowerCase().split(/\s+/).filter(Boolean)
 
@@ -69,9 +73,21 @@ async function runEncodeWithCallbacks(opts: EncodeOptions, cb: EncodeCallbacks) 
   cb.onDone(allTokenIds.length, buffer.byteLength, elapsed)
 }
 
-export async function runEncode(opts: EncodeOptions) {
+export async function runEncode() {
+  const config = loadConfig()
+  const tokenizerCfg = resolveTokenizerConfig(config)
+  const encodeCfg = resolvePretrainEncodeConfig(config)
+
+  const opts: EncodeOptions = {
+    inputDir: resolve(process.cwd(), encodeCfg.inputDir),
+    vocabDir: resolve(process.cwd(), encodeCfg.vocabDir),
+    outputFile: resolve(process.cwd(), encodeCfg.outputFile),
+    charMarker: tokenizerCfg.charMarker,
+  }
+
   if (!fs.existsSync(path.join(opts.vocabDir, 'vocab.json')) || !fs.existsSync(path.join(opts.vocabDir, 'merges.json'))) {
     console.error(`[encode] vocab.json or merges.json not found in ${opts.vocabDir}`)
+    console.error(`[encode] Run "pretrain tokenize" first.`)
     process.exit(1)
   }
 

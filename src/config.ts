@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'fs'
-import { resolve } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { resolve, dirname } from 'path'
 import type { WikipediaProviderConfig } from './pretrain/providers/wikipedia'
 
 // ---- Global ----
@@ -83,16 +83,39 @@ export const DEFAULT_TRAIN: TrainConfig = {
   batchSize: 16,
 }
 
+// ---- Defaults (full) ----
+
+export const DEFAULT_CONFIG: TinyLLMConfig = {
+  tokenizer: DEFAULT_TOKENIZER,
+  pretrain: {
+    tokenize: DEFAULT_PRETRAIN_TOKENIZE,
+    encode: DEFAULT_PRETRAIN_ENCODE,
+    providers: {
+      wikipedia: {
+        topics: ['Indonesia', 'Sejarah Indonesia', 'Geografi', 'Ilmu pengetahuan', 'Matematika', 'Fisika', 'Biologi', 'Kimia', 'Teknologi', 'Seni'],
+        language: 'id',
+        outputDir: 'data/pretrain/raw',
+        searchLimit: 5,
+      },
+    },
+  },
+  train: DEFAULT_TRAIN,
+}
+
 // ---- Loader ----
 
 const CONFIG_PATH = resolve(process.cwd(), 'data/config.json')
 
-export function loadConfig(): TinyLLMConfig {
+function ensureConfig(): void {
   if (!existsSync(CONFIG_PATH)) {
-    console.warn(`[config] data/config.json not found, using defaults.`)
-    return {}
+    mkdirSync(dirname(CONFIG_PATH), { recursive: true })
+    writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf-8')
+    console.log(`[config] Generated default config at data/config.json`)
   }
+}
 
+export function loadConfig(): TinyLLMConfig {
+  ensureConfig()
   const raw = readFileSync(CONFIG_PATH, 'utf-8')
   return JSON.parse(raw) as TinyLLMConfig
 }

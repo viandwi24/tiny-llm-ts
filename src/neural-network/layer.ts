@@ -6,6 +6,10 @@ export class LinearLayer {
   inputSize: number
   outputSize: number
 
+  // gradient — diisi saat backward(), dibaca oleh optimizer
+  gradWeights: number[][] = []
+  gradBias: number[] = []
+
   constructor(inputSize: number, outputSize: number) {
     this.inputSize = inputSize
     this.outputSize = outputSize
@@ -34,12 +38,36 @@ export class LinearLayer {
     // return
     return output
   }
+
+  backward(input: number[][], dOutput: number[][]): { dInput: number[][]; dWeights: number[][]; dBias: number[] } {
+    // dInput = dOutput * W^T
+    const dInput = Matrix.multiply(dOutput, Matrix.transpose(this.weights))
+
+    // dWeights = input^T * dOutput
+    const dWeights = Matrix.multiply(Matrix.transpose(input), dOutput)
+
+    // dBias = sum of dOutput across batch
+    const dBias = Array(this.outputSize).fill(0)
+    for (const row of dOutput) {
+      for (let i = 0; i < this.outputSize; i++) {
+        dBias[i]! += row[i]!
+      }
+    }
+
+    this.gradWeights = dWeights
+    this.gradBias = dBias
+    return { dInput, dWeights, dBias }
+  }
 }
 
 export class LayerNormalization {
   gamma: number[]   // scale, dipelajari saat training
   beta: number[]    // shift, dipelajari saat training
   eps: number       // nilai kecil biar tidak divide by zero
+
+  // gradient — diisi saat backward(), dibaca oleh optimizer
+  gradGamma: number[] = []
+  gradBeta: number[] = []
 
   constructor(embedDim: number) {
     this.gamma = Array(embedDim).fill(1)   // init 1
@@ -62,5 +90,53 @@ export class LayerNormalization {
       // scale dan shift dengan gamma dan beta
       return normalized.map((val, i) => val * this.gamma[i]! + this.beta[i]!)
     })
+  }
+
+  backward(x: number[][], dOutput: number[][]): { dInput: number[][]; dGamma: number[]; dBeta: number[] } {
+    const batchSize = x.length
+    const embedDim = x[0]?.length ?? 0
+
+    // hitung mean dan variance untuk backward pass
+    const means = x.map(row => row.reduce((a, b) => a + b, 0) / embedDim)
+    const variances = x.map((row, i) =>
+      row.reduce((a, b) => a + (b - means[i]!) ** 2, 0) / embedDim
+    )
+
+    // hitung dGamma dan dBeta
+    const dGamma = Array(embedDim).fill(0)
+    const dBeta = Array(embedDim).fill(0)
+    for (let i = 0; i < batchSize; i++) {
+      for (let j = 0; j < embedDim; j++) {
+        const normalized = (x[i]![j]! - means[i]!) / Math.sqrt(variances[i]! + this.eps)
+        dGamma[j]! += dOutput[i]![j]! * normalized
+        dBeta[j]! += dOutput[i]![j]!
+      }
+    }
+
+    // hitung dInput — per baris i secara independen
+    const dInput = Array.from({ length: batchSize }, () => Array(embedDim).fill(0))
+    for (let i = 0; i < batchSize; i++) {
+      const std = Math.sqrt(variances[i]! + this.eps)
+
+      // dXNorm[j] = dOutput[i][j] * gamma[j]
+      const dXNorm = Array.from({ length: embedDim }, (_, j) => dOutput[i]![j]! * this.gamma[j]!)
+
+      // xNorm[j] = (x[i][j] - mean) / std
+      const xNorm = Array.from({ length: embedDim }, (_, j) => (x[i]![j]! - means[i]!) / std)
+
+      // sum1 = (1/N) * sum_j(dXNorm)
+      const sum1 = dXNorm.reduce((a, b) => a + b, 0) / embedDim
+
+      // sum2 = (1/N) * sum_j(dXNorm * xNorm)
+      const sum2 = dXNorm.reduce((a, v, j) => a + v * xNorm[j]!, 0) / embedDim
+
+      for (let j = 0; j < embedDim; j++) {
+        dInput[i]![j]! = (1 / std) * (dXNorm[j]! - sum1 - xNorm[j]! * sum2)
+      }
+    }
+
+    this.gradGamma = dGamma
+    this.gradBeta = dBeta
+    return { dInput, dGamma, dBeta }
   }
 }

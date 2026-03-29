@@ -1,12 +1,15 @@
 import fs from 'fs'
 import path from 'path'
+import { resolve } from 'path'
 import React from 'react'
 import { renderTUI } from '../tui'
 import { TokenizeProgress, type TokenizeCallbacks } from '../tui/components/TokenizeProgress'
-import type { PretrainTokenizeConfig } from '../config'
+import { loadConfig, resolveTokenizerConfig, resolvePretrainTokenizeConfig } from '../config'
 import { SPECIAL_TOKENS } from '../constants'
 
-export interface TokenizeOptions extends PretrainTokenizeConfig {
+interface TokenizeOptions {
+  inputDir: string
+  outputDir: string
   vocabSize: number
   charMarker: string
 }
@@ -119,7 +122,18 @@ async function runTokenizeWithCallbacks(opts: TokenizeOptions, cb: TokenizeCallb
   cb.onDone(Object.keys(vocab).length, merges.length, totalElapsed)
 }
 
-export async function runTokenize(opts: TokenizeOptions) {
+export async function runTokenize() {
+  const config = loadConfig()
+  const tokenizerCfg = resolveTokenizerConfig(config)
+  const tokenizeCfg = resolvePretrainTokenizeConfig(config)
+
+  const opts: TokenizeOptions = {
+    inputDir: resolve(process.cwd(), tokenizeCfg.inputDir),
+    outputDir: resolve(process.cwd(), tokenizeCfg.outputDir),
+    vocabSize: tokenizerCfg.vocabSize,
+    charMarker: tokenizerCfg.charMarker,
+  }
+
   const waitUntilExit = renderTUI(
     React.createElement(TokenizeProgress, {
       vocabSize: opts.vocabSize,
