@@ -33,9 +33,23 @@ export interface PretrainConfig {
   encode?: Partial<PretrainEncodeConfig>
 }
 
+export interface TrainConfig {
+  dataFile: string
+  vocabSize: number
+  embedSize: number
+  numHeads: number
+  numLayers: number
+  ffnDim: number
+  maxSeqLen: number
+  epochs: number
+  learningRate: number
+  batchSize: number
+}
+
 export interface TinyLLMConfig {
   tokenizer?: Partial<TokenizerConfig>
   pretrain?: PretrainConfig
+  train?: Partial<TrainConfig>
 }
 
 // ---- Defaults ----
@@ -54,6 +68,19 @@ export const DEFAULT_PRETRAIN_ENCODE: PretrainEncodeConfig = {
   inputDir: 'data/pretrain/raw',
   vocabDir: 'data/pretrain/tokenized',
   outputFile: 'data/pretrain/train.bin',
+}
+
+export const DEFAULT_TRAIN: TrainConfig = {
+  dataFile: 'data/pretrain/train.bin',
+  vocabSize: 8000,
+  embedSize: 128,
+  numHeads: 4,
+  numLayers: 4,
+  ffnDim: 512,
+  maxSeqLen: 128,
+  epochs: 10,
+  learningRate: 3e-4,
+  batchSize: 16,
 }
 
 // ---- Loader ----
@@ -82,4 +109,8 @@ export function resolvePretrainTokenizeConfig(config: TinyLLMConfig): PretrainTo
 
 export function resolvePretrainEncodeConfig(config: TinyLLMConfig): PretrainEncodeConfig {
   return { ...DEFAULT_PRETRAIN_ENCODE, ...config.pretrain?.encode }
+}
+
+export function resolveTrainConfig(config: TinyLLMConfig): TrainConfig {
+  return { ...DEFAULT_TRAIN, ...config.train }
 }
