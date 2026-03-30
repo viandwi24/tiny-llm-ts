@@ -6,6 +6,7 @@ import { wikipediaProvider } from '../pretrain/providers/wikipedia'
 import { runTokenize } from '../pretrain/tokenize'
 import { runEncode } from '../pretrain/encode'
 import { runTrain } from '../train'
+import { runChat } from '../chat'
 import type { PretrainProvider } from '../pretrain/provider'
 
 const PRETRAIN_PROVIDERS: PretrainProvider<any>[] = [
@@ -73,7 +74,20 @@ export const createCLI = () => {
   program
     .command('train')
     .description('Train the Transformer model (config from data/config.json)')
-    .action(() => runTrain())
+    .option('--reset', 'Hapus checkpoint lama dan mulai training dari awal')
+    .action((opts) => runTrain({ reset: !!opts.reset }))
+
+  program
+    .command('chat')
+    .description('Chat with the trained model (loads latest checkpoint)')
+    .option('--temperature <number>', 'Sampling temperature (0 = greedy)', '0')
+    .option('--max-tokens <number>', 'Max new tokens per reply', '50')
+    .option('--repetition-penalty <number>', 'Penalize repeated tokens (1.0 = off, 1.3 = default)', '1.3')
+    .action((opts) => runChat({
+      temperature: parseFloat(opts.temperature),
+      maxTokens: parseInt(opts.maxTokens, 10),
+      repetitionPenalty: parseFloat(opts.repetitionPenalty),
+    }))
 
   return program
 }

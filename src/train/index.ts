@@ -7,6 +7,7 @@ import { Transformer } from '../transformer'
 import { loadTokenizer } from '../tokenizer'
 import { softmax } from '../neural-network/activation'
 import { AdamOptimizer } from './optimizer'
+import { saveCheckpoint, loadCheckpoint, latestCheckpoint } from './checkpoint'
 
 export interface TrainerConfig {
   maxSteps: number
@@ -100,7 +101,17 @@ const softmaxCrossEntropyGradient = (cfg: TrainConfig, logits: number[][], targe
   return dLogits.map(row => row.map(val => val / logits.length)) // average over batch
 }
 
-export async function runTrain() {
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}h ${m}m ${sec}s`
+  if (m > 0) return `${m}m ${sec}s`
+  return `${sec}s`
+}
+
+export async function runTrain(opts: { reset?: boolean } = {}) {
   const config = loadConfig()
   const trainCfg = resolveTrainConfig(config)
   const tokenizerCfg = resolveTokenizerConfig(config)
@@ -108,6 +119,8 @@ export async function runTrain() {
 
   const dataFile = resolve(process.cwd(), trainCfg.dataFile)
   const vocabDir = resolve(process.cwd(), tokenizeCfg.outputDir)
+  const checkpointDir = resolve(process.cwd(), 'data/checkpoints')
+  const saveEvery = 10000
 
   if (!existsSync(dataFile)) {
     console.error(`[train] Data file not found: ${dataFile}`)
@@ -115,47 +128,133 @@ export async function runTrain() {
     process.exit(1)
   }
 
-  manualTestTrain()
+  // model & komponen
+  const model = new Transformer({
+    vocabSize: trainCfg.vocabSize,
+    embedSize: trainCfg.embedSize,
+    numHeads: trainCfg.numHeads,
+    numLayers: trainCfg.numLayers,
+    ffnDim: trainCfg.ffnDim,
+    maxSeqLen: trainCfg.maxSeqLen,
+  })
+  const optimizer = new AdamOptimizer(model, trainCfg.learningRate)
+  const tokenizer = loadTokenizer(vocabDir, tokenizerCfg.charMarker)
+  const dataLoader = new DataLoader(dataFile, 1, trainCfg.maxSeqLen)
 
-  // // manual test
-  // const tokenizer = loadTokenizer(vocabDir, tokenizerCfg.charMarker)
+  // reset: hapus semua checkpoint lama
+  if (opts.reset && existsSync(checkpointDir)) {
+    fs.rmSync(checkpointDir, { recursive: true, force: true })
+    console.log(`[train] Checkpoint direset, mulai dari awal.`)
+  }
 
-  // const testText = 'jakarta adalah'
-  // const testIds = tokenizer.encode(testText)
-  // const testTokens = testIds.map(id => tokenizer.idToToken(id))
+  // resume dari checkpoint jika ada
+  let startStep = 0
+  const latest = latestCheckpoint(checkpointDir)
+  if (latest) {
+    const meta = loadCheckpoint(model, latest)
+    startStep = meta.step + 1
+  }
 
-  // console.log(`\n[test] Input text   : "${testText}"`)
-  // console.log(`[test] Token IDs    : [${testIds.join(', ')}]`)
-  // console.log(`[test] Tokens       : [${testTokens.map(t => `"${t}"`).join(', ')}]`)
-  // console.log(`[test] Sequence len : ${testIds.length}`)
+  const maxSteps = trainCfg.epochs * Math.floor(dataLoader.tokens.length / trainCfg.maxSeqLen)
+  console.log(`[train] Steps: ${startStep} → ${maxSteps} | lr: ${trainCfg.learningRate} | seqLen: ${trainCfg.maxSeqLen}`)
 
-  
-  // const model = new Transformer({
-  //   vocabSize: trainCfg.vocabSize,
-  //   embedSize: trainCfg.embedSize,
-  //   numHeads: trainCfg.numHeads,
-  //   numLayers: trainCfg.numLayers,
-  //   ffnDim: trainCfg.ffnDim,
-  //   maxSeqLen: trainCfg.maxSeqLen,
-  // })
+  // training loop
+  let lossAccum = 0
+  let lossCount = 0
+  const trainStart = Date.now()
+  let cpuSnapshot = process.cpuUsage()
+  let timeSnapshot = Date.now()
 
-  // const optimizer = new AdamOptimizer(model, trainCfg.learningRate)
+  for (let step = startStep; step < maxSteps; step++) {
+    // ambil batch, reset jika data habis
+    let batch = dataLoader.nextBatch()
+    if (!batch) {
+      dataLoader.reset()
+      batch = dataLoader.nextBatch()!
+    }
 
+    const inputIds  = batch.inputIds[0]!
+    const targetIds = batch.targetIds[0]!
 
-  // // run backward pass with dLogits
-  // model.backward(dLogits)
+    // forward
+    const logits = model.forward(inputIds)
+    const loss = crossEntropyLoss(logits, targetIds)
+    lossAccum += loss
+    lossCount++
 
-  // // update model parameters
-  // optimizer.step()
+    // backward + update
+    const dLogits = softmaxCrossEntropyGradient(trainCfg, logits, targetIds)
+    model.backward(dLogits)
+    optimizer.step()
 
-  // // check
-  // const resAfter = model.forward(testIds)
-  // const lossAfter = crossEntropyLoss(resAfter, targetIds)
-  // console.log(`[test] Loss after one update: ${lossAfter.toFixed(4)}`)
+    // log setiap 10 step
+    if (step % 10 === 0) {
+      const avgLoss = lossAccum / lossCount
+
+      // argmax tanpa spread agar aman untuk array besar
+      const lastLogits = logits[logits.length - 1]!
+      let maxVal = -Infinity, predictedId = 0
+      for (let k = 0; k < lastLogits.length; k++) {
+        if (lastLogits[k]! > maxVal) { maxVal = lastLogits[k]!; predictedId = k }
+      }
+      const predictedToken = tokenizer.idToToken(predictedId)
+
+      // ETA
+      const elapsed = Date.now() - trainStart
+      const stepsCompleted = step - startStep + 1
+      const msPerStep = elapsed / stepsCompleted
+      const remaining = (maxSteps - step) * msPerStep
+      const etaStr = formatDuration(remaining)
+
+      // CPU usage sejak snapshot terakhir
+      const cpuDelta = process.cpuUsage(cpuSnapshot)
+      const timeDelta = (Date.now() - timeSnapshot) * 1000  // ke microseconds
+      const cpuPct = timeDelta > 0
+        ? ((cpuDelta.user + cpuDelta.system) / timeDelta * 100).toFixed(1)
+        : '0.0'
+      cpuSnapshot = process.cpuUsage()
+      timeSnapshot = Date.now()
+
+      const mem = process.memoryUsage()
+      const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1)
+      const rssMB  = (mem.rss      / 1024 / 1024).toFixed(1)
+
+      console.log(
+        `[train] step ${step}/${maxSteps}` +
+        ` | loss: ${avgLoss.toFixed(4)}` +
+        ` | predicted: "${predictedToken}"` +
+        ` | eta: ${etaStr}` +
+        ` | cpu: ${cpuPct}%` +
+        ` | heap: ${heapMB}MB rss: ${rssMB}MB`
+      )
+      lossAccum = 0
+      lossCount = 0
+    }
+
+    // simpan checkpoint setiap saveEvery step
+    const saved = saveCheckpoint(model, { step, loss, savedAt: new Date().toISOString() }, checkpointDir, (step % saveEvery === 0 && step > 0))
+    // if (step % saveEvery === 0 && step > 0) {
+    //   const saved = saveCheckpoint(model, { step, loss, savedAt: new Date().toISOString() }, checkpointDir)
+    //   console.log(`[checkpoint] Saved → ${saved}`)
+    // }
+  }
+
+  // simpan checkpoint akhir
+  saveCheckpoint(model, { step: maxSteps, loss: lossAccum / Math.max(lossCount, 1), savedAt: new Date().toISOString() }, checkpointDir)
+  console.log(`[train] Done.`)
 }
 
+/**
+ * Fungsi manual untuk testing dan pembelajaran step-by-step.
+ * Tidak dipanggil di production — hanya untuk eksperimen.
+ *
+ * @example
+ * // manualTestTrain()
+ */
 
 
+
+// dont delete, just for learning and testing :
 function manualTestTrain() {
   const config = loadConfig()
   const trainCfg = resolveTrainConfig(config)

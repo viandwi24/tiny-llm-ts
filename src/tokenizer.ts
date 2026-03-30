@@ -36,24 +36,35 @@ export function loadTokenizer(vocabDir: string, charMarker: string): Tokenizer {
 
     encode(text: string): number[] {
       const tokenIds: number[] = []
-      const words = text.toLowerCase().split(/\s+/).filter(Boolean)
 
-      for (const word of words) {
-        let symbols = (charMarker + word).split('')
+      // pisahkan special tokens (<|...|>) sebelum BPE
+      const parts = text.split(/(<\|[^|]+\|>)/g)
 
-        for (const [left, right] of merges) {
-          let i = 0
-          while (i < symbols.length - 1) {
-            if (symbols[i] === left && symbols[i + 1] === right) {
-              symbols = [...symbols.slice(0, i), left + right, ...symbols.slice(i + 2)]
-            } else {
-              i++
-            }
-          }
+      for (const part of parts) {
+        if (part in vocab) {
+          // special token langsung dapat ID-nya
+          tokenIds.push(vocab[part]!)
+          continue
         }
 
-        for (const symbol of symbols) {
-          tokenIds.push(vocab[symbol] ?? unkId)
+        const words = part.toLowerCase().split(/\s+/).filter(Boolean)
+        for (const word of words) {
+          let symbols = (charMarker + word).split('')
+
+          for (const [left, right] of merges) {
+            let i = 0
+            while (i < symbols.length - 1) {
+              if (symbols[i] === left && symbols[i + 1] === right) {
+                symbols = [...symbols.slice(0, i), left + right, ...symbols.slice(i + 2)]
+              } else {
+                i++
+              }
+            }
+          }
+
+          for (const symbol of symbols) {
+            tokenIds.push(vocab[symbol] ?? unkId)
+          }
         }
       }
 
